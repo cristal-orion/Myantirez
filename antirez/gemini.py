@@ -15,7 +15,7 @@ class GeminiError(RuntimeError):
 def request(path, payload, timeout=180):
     key = api_key()
     if not key:
-        raise GeminiError("Chiave Gemini mancante. Inseriscila in .env e riavvia l'app.")
+        raise GeminiError("Chiave Gemini mancante. Inseriscila nelle Impostazioni.")
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
         "https://generativelanguage.googleapis.com/" + path,

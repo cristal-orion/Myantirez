@@ -2,14 +2,13 @@
 
 import json
 import logging
-import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import chat, db, ingest
-from .config import ROOT, api_key
+from .config import ROOT, api_key, public_settings, save_settings, setting
 
 LOG = logging.getLogger(__name__)
 STATIC = ROOT / "static"
@@ -41,6 +40,8 @@ class Handler(BaseHTTPRequestHandler):
                                        "last_sync": db.setting("last_sync"),
                                        "error": db.setting("sync_error"),
                                        "running": ingest.is_running()})
+            if path == "/api/settings":
+                return self.send_json(public_settings())
             if path == "/api/videos":
                 return self.send_json(db.videos(query.get("q", [""])[0][:200], limit=200))
             if path.startswith("/api/videos/"):
@@ -96,11 +97,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Richiesta non valida.")
             if path == "/api/sync":
                 if not api_key():
-                    return self.send_json({"error": "Aggiungi GEMINI_API_KEY al file .env e riavvia l'app."}, 400)
+                    return self.send_json({"error": "Aggiungi la chiave Gemini nelle Impostazioni."}, 400)
                 if ingest.is_running():
                     return self.send_json({"error": "Acquisizione già in corso."}, 409)
                 threading.Thread(target=self.background_sync, daemon=True).start()
                 return self.send_json({"started": True}, 202)
+            if path == "/api/settings":
+                return self.send_json(save_settings(data))
             if path == "/api/chat":
                 question = data.get("question", "")
                 ident = data.get("conversation_id")
@@ -127,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port=None):
-    port = port or int(os.environ.get("PORT", "8765"))
+    port = port or int(setting("PORT", "8765"))
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     print(f"Antirez è pronto: http://127.0.0.1:{port}", flush=True)

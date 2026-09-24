@@ -1,32 +1,98 @@
 import os
+import re
+import tempfile
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 CHANNEL_ID = "UCDDG9vOcmgwlslJJpCWjqOg"
 CHANNEL_URL = "https://www.youtube.com/@antirez/videos"
+ENV_PATH = ROOT / ".env"
+MODEL_DEFAULTS = {"TRANSCRIBE_MODEL": "gemini-3.5-transcribe",
+                  "CHAT_MODEL": "gemini-3.5-flash", "EMBED_MODEL": "gemini-embedding-001"}
+_write_lock = threading.Lock()
 
 
-def load_env(path=ROOT / ".env"):
-    """Small local .env reader; environment variables take precedence."""
+def load_env(path=None):
+    """Read local settings without putting secrets into the process environment."""
+    path = path or ENV_PATH
     if not path.exists():
-        return
+        return {}
+    values = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        if key and key not in os.environ:
-            os.environ[key] = value.strip().strip('"').strip("'")
+        if key:
+            values[key] = value.strip().strip('"').strip("'")
+    return values
 
 
-load_env()
+def setting(name, default=""):
+    value = os.environ[name] if name in os.environ else load_env().get(name, default)
+    return (value or default).strip()
 
 
 def api_key():
-    return os.environ.get("GEMINI_API_KEY", "").strip()
+    return setting("GEMINI_API_KEY")
 
 
 def model(name, default):
-    return os.environ.get(name, default).strip() or default
+    return setting(name, default)
+
+
+def public_settings():
+    """Expose only whether a key exists, never its value or a masked fragment."""
+    return {"has_key": bool(api_key()),
+            "models": {name: model(name, default) for name, default in MODEL_DEFAULTS.items()},
+            "locked": [name for name in ("GEMINI_API_KEY", *MODEL_DEFAULTS) if name in os.environ]}
+
+
+def save_settings(values):
+    allowed = {"api_key", "clear_key", *MODEL_DEFAULTS}
+    if values.keys() - allowed:
+        raise ValueError("Impostazione non riconosciuta.")
+    key = values.get("api_key", "")
+    clear = values.get("clear_key", False)
+    if not isinstance(key, str) or len(key) > 512 or any(ord(c) < 32 for c in key):
+        raise ValueError("Chiave API non valida.")
+    if not isinstance(clear, bool) or (clear and key.strip()):
+        raise ValueError("Scegli se salvare o rimuovere la chiave.")
+    updates = {}
+    if key.strip() or clear:
+        updates["GEMINI_API_KEY"] = "" if clear else key.strip()
+    for name in MODEL_DEFAULTS:
+        if name in values:
+            value = values[name]
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", value.strip()):
+                raise ValueError("Il nome del modello deve contenere solo lettere, numeri, punti, _ o -.")
+            updates[name] = value.strip()
+    if any(name in os.environ for name in updates):
+        raise ValueError("Una di queste impostazioni è gestita dall'ambiente del sistema e non si può cambiare qui.")
+    if not updates:
+        return public_settings()
+
+    with _write_lock:
+        lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
+        remaining = dict(updates)
+        for index, line in enumerate(lines):
+            name = line.split("=", 1)[0].strip()
+            if name in updates:
+                lines[index] = f"{name}={updates[name]}"
+                remaining.pop(name, None)
+        lines.extend(f"{name}={value}" for name, value in remaining.items())
+        # Create privately, then replace atomically so a failed write cannot truncate .env.
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=ROOT,
+                                             prefix=".env-", delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write("\n".join(lines) + "\n")
+            os.replace(temporary, ENV_PATH)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    return public_settings()

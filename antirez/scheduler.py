@@ -5,10 +5,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
-import os
 from pathlib import Path
 
-from .config import ROOT
+from .config import ROOT, setting
 
 
 def quote(value):
@@ -42,7 +41,7 @@ def install():
     subprocess.run(["systemctl", "--user", "is-active", "--quiet", "antirez-sync.timer"], check=True)
     subprocess.run(["systemctl", "--user", "enable", "--now", "antirez-web.service"], check=True)
     subprocess.run(["systemctl", "--user", "restart", "antirez-web.service"], check=True)
-    address = f"http://127.0.0.1:{os.environ.get('PORT', '8765')}"
+    address = f"http://127.0.0.1:{setting('PORT', '8765')}"
     for _ in range(20):
         try:
             with urllib.request.urlopen(address + "/api/status", timeout=1) as response:

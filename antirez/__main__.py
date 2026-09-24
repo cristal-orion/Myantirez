@@ -17,7 +17,7 @@ def main():
         serve(args.port)
     elif args.command == "sync":
         if not api_key():
-            parser.error("Chiave Gemini mancante. Copia .env.example in .env e aggiungi GEMINI_API_KEY.")
+            parser.error("Chiave Gemini mancante. Aggiungila nelle Impostazioni o in .env.")
         if not ingest.sync():
             print("Acquisizione già in esecuzione in un altro processo.")
         else:

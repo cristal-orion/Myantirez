@@ -1,5 +1,7 @@
 import io
 import json
+import os
+import stat
 import tempfile
 import unittest
 import urllib.request
@@ -11,7 +13,7 @@ from pathlib import Path
 from threading import Thread
 from unittest.mock import patch
 
-from antirez import chat, db, gemini, ingest
+from antirez import chat, config, db, gemini, ingest
 from antirez.server import Handler
 
 
@@ -155,6 +157,52 @@ class ArchiveTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as error:
             urllib.request.urlopen(request)
         self.assertEqual(403, error.exception.code)
+
+    def test_settings_are_local_private_and_active_without_restart(self):
+        env = Path(self.temporary.name) / ".env"
+        env.write_text("# Preferenze locali\nPORT=8765\nCHAT_MODEL=vecchio\n", encoding="utf-8")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.addCleanup(server.server_close)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+
+        def post(payload):
+            request = urllib.request.Request(base + "/api/settings", json.dumps(payload).encode(),
+                                             {"Content-Type": "application/json"})
+            return urllib.request.urlopen(request)
+
+        with patch.object(config, "ENV_PATH", env), patch.dict(os.environ, {}, clear=True):
+            with urllib.request.urlopen(base + "/api/settings") as response:
+                self.assertNotIn("api_key", json.load(response))
+            with post({"api_key": "test-secret", "CHAT_MODEL": "gemini-2.5-flash"}) as response:
+                result = json.load(response)
+                self.assertTrue(result["has_key"])
+                self.assertNotIn("test-secret", json.dumps(result))
+            self.assertEqual("test-secret", config.api_key())
+            self.assertEqual("gemini-2.5-flash", config.model("CHAT_MODEL", "default"))
+            self.assertEqual(0o600, stat.S_IMODE(env.stat().st_mode))
+            self.assertIn("PORT=8765", env.read_text())
+            with urllib.request.urlopen(base + "/api/status") as response:
+                self.assertTrue(json.load(response)["has_key"])
+            for invalid in ({"api_key": "secret\nPORT=1"}, {"CHAT_MODEL": "../wrong"}, {"PORT": "1"}):
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    post(invalid)
+                self.assertEqual(400, error.exception.code)
+            self.assertEqual("test-secret", config.api_key())
+            with post({"clear_key": True}) as response:
+                self.assertFalse(json.load(response)["has_key"])
+            self.assertEqual("", config.api_key())
+            self.assertEqual("gemini-2.5-flash", config.model("CHAT_MODEL", "default"))
+
+    def test_environment_settings_cannot_be_overridden_in_page(self):
+        env = Path(self.temporary.name) / ".env"
+        with patch.object(config, "ENV_PATH", env), patch.dict(os.environ, {"GEMINI_API_KEY": "external"}):
+            self.assertIn("GEMINI_API_KEY", config.public_settings()["locked"])
+            with self.assertRaises(ValueError):
+                config.save_settings({"api_key": "replacement"})
+            self.assertFalse(env.exists())
 
 
 if __name__ == "__main__":

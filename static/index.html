@@ -17,7 +17,8 @@
       </a>
       <nav class="main-nav" aria-label="Navigazione principale">
         <button class="nav-link selected" type="button" data-view="archive" aria-current="page">L'archivio</button>
-        <button class="nav-link" type="button" data-view="chat">Chiedi all'archivio <span aria-hidden="true">↗</span></button>
+        <button class="nav-link" type="button" data-view="chat">Chiedi <span class="chat-nav-detail">all'archivio</span> <span aria-hidden="true">↗</span></button>
+        <button class="nav-link" type="button" data-view="settings">Impostazioni</button>
       </nav>
       <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Passa al tema scuro">◐ <span>Tema</span></button>
     </header>
@@ -63,6 +64,34 @@
             <div class="chat-form-bottom"><span>Invio per chiedere · Maiuscolo + Invio per andare a capo</span><button id="send-button" type="submit">Chiedi <span aria-hidden="true">↗</span></button></div>
           </form>
         </div>
+      </section>
+
+      <section id="settings-view" class="view settings-view" aria-labelledby="settings-title" hidden>
+        <div class="settings-heading">
+          <span class="eyebrow">IL TUO ANGOLO DI CONTROLLO</span>
+          <h1 id="settings-title">Metti tutto<br><em>a punto.</em></h1>
+          <p>La chiave serve per acquisire i video e chiedere all’archivio. Resta su questo PC, nel file <code>.env</code>.</p>
+        </div>
+        <form id="settings-form" class="settings-form">
+          <div class="settings-section">
+            <div class="settings-section-heading"><span class="settings-number">01 /</span><div><h2>La chiave Gemini</h2><p id="key-status">Controllo la configurazione…</p></div></div>
+            <div class="setting-control">
+              <label for="api-key">Chiave API</label>
+              <div class="secret-input"><input id="api-key" name="api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Incolla qui la tua chiave" maxlength="512"><button id="toggle-key" type="button" aria-label="Mostra la chiave">Mostra</button></div>
+              <p class="field-help">Lascia vuoto per mantenere la chiave già salvata. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Crea una chiave su Google AI Studio ↗</a></p>
+              <button id="remove-key" class="remove-key" type="button" hidden>Rimuovi la chiave salvata</button>
+            </div>
+          </div>
+          <div class="settings-section">
+            <div class="settings-section-heading"><span class="settings-number">02 /</span><div><h2>I modelli</h2><p>Puoi cambiare i nomi quando vuoi. Le modifiche valgono dalle prossime richieste.</p></div></div>
+            <div class="model-fields">
+              <div class="setting-control"><label for="transcribe-model">Trascrizione audio</label><p class="field-help">Per trasformare l’audio in testo.</p><input id="transcribe-model" name="TRANSCRIBE_MODEL" type="text" spellcheck="false" autocomplete="off" maxlength="100" required></div>
+              <div class="setting-control"><label for="chat-model">Chat e riassunti</label><p class="field-help">Usato anche se il download dell’audio non riesce.</p><input id="chat-model" name="CHAT_MODEL" type="text" spellcheck="false" autocomplete="off" maxlength="100" required></div>
+              <div class="setting-control"><label for="embed-model">Ricerca semantica</label><p class="field-help">Per trovare idee simili anche con parole diverse.</p><input id="embed-model" name="EMBED_MODEL" type="text" spellcheck="false" autocomplete="off" maxlength="100" required></div>
+            </div>
+          </div>
+          <div class="settings-actions"><span id="settings-feedback" role="status" aria-live="polite"></span><button id="save-settings" type="submit">Salva impostazioni <span aria-hidden="true">↗</span></button></div>
+        </form>
       </section>
     </main>
 

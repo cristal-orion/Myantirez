@@ -87,6 +87,7 @@ function setView(view) {
   document.body.dataset.view = view;
   $("#archive-view").hidden = view !== "archive";
   $("#chat-view").hidden = view !== "chat";
+  $("#settings-view").hidden = view !== "settings";
   document.querySelectorAll(".nav-link").forEach((link) => {
     const active = link.dataset.view === view;
     link.classList.toggle("selected", active);
@@ -97,6 +98,7 @@ function setView(view) {
     loadConversations();
     if (!state.conversation) renderWelcome();
   }
+  if (view === "settings") { settingsFeedback(""); loadSettings(); }
 }
 
 function emptyReader() {
@@ -106,8 +108,12 @@ function emptyReader() {
   area.append(element("div", "empty-art", "a."));
   area.append(element("h2", "", "C'è spazio per nuove idee."));
   area.append(element("p", "", "Qui troverai il riassunto e la trascrizione dei video. Inizia con «Controlla nuovi video»: la prima volta raccoglieremo gli ultimi dieci."));
-  const help = element("p", "empty-help", "Prima, aggiungi la chiave Gemini al file .env e riavvia l'app.");
-  if (!state.hasKey) area.append(help);
+  if (!state.hasKey) {
+    const help = element("p", "empty-help", "Prima, aggiungi la chiave Gemini nelle Impostazioni.");
+    const link = element("a", "settings-shortcut", "Apri Impostazioni ↗");
+    link.href = "#settings";
+    area.append(help, link);
+  }
   reader.append(area);
 }
 
@@ -205,8 +211,10 @@ async function updateStatus() {
       : "L'archivio aspetta il primo video";
     $("#status-indicator").classList.toggle("busy", info.running);
     $("#sync-button").disabled = info.running || !info.has_key;
-    $("#sync-button").title = info.has_key ? "" : "Aggiungi GEMINI_API_KEY al file .env e riavvia";
+    $("#sync-button").title = info.has_key ? "" : "Aggiungi la chiave Gemini nelle Impostazioni";
+    const keyChanged = state.hasKey !== info.has_key;
     state.hasKey = info.has_key;
+    if (keyChanged && !state.videos.length && !$("#search-input").value) emptyReader();
     if (info.error) showNotice(info.error);
     else if (!state.busy) showNotice("");
     if (!state.loaded || state.running !== info.running || state.lastSync !== info.last_sync || info.running) {
@@ -216,6 +224,66 @@ async function updateStatus() {
       await loadVideos();
     }
   } catch { showNotice("Il server locale non risponde. Riavvia l'app e ricarica la pagina."); }
+}
+
+const modelFields = {TRANSCRIBE_MODEL: "#transcribe-model", CHAT_MODEL: "#chat-model", EMBED_MODEL: "#embed-model"};
+
+function settingsFeedback(message, error = false) {
+  const target = $("#settings-feedback");
+  target.textContent = message;
+  target.classList.toggle("error", error);
+}
+
+async function loadSettings() {
+  try {
+    const settings = await api("/api/settings");
+    const locked = new Set(settings.locked);
+    $("#key-status").textContent = locked.has("GEMINI_API_KEY")
+      ? "Chiave configurata nell’ambiente del sistema: gestiscila lì."
+      : settings.has_key ? "Chiave pronta · salvata su questo PC" : "Nessuna chiave salvata, per ora.";
+    $("#api-key").disabled = locked.has("GEMINI_API_KEY");
+    $("#toggle-key").disabled = locked.has("GEMINI_API_KEY");
+    $("#api-key").value = "";
+    $("#api-key").type = "password";
+    $("#toggle-key").textContent = "Mostra";
+    $("#toggle-key").setAttribute("aria-label", "Mostra la chiave");
+    $("#remove-key").hidden = !settings.has_key || locked.has("GEMINI_API_KEY");
+    for (const [name, selector] of Object.entries(modelFields)) {
+      $(selector).value = settings.models[name];
+      $(selector).disabled = locked.has(name);
+      $(selector).title = locked.has(name) ? "Gestito dall’ambiente del sistema" : "";
+    }
+  } catch (error) { settingsFeedback(error.message, true); }
+}
+
+async function saveSettings(event) {
+  event.preventDefault();
+  const values = {};
+  if (!$("#api-key").disabled) values.api_key = $("#api-key").value;
+  for (const [name, selector] of Object.entries(modelFields)) {
+    if (!$(selector).disabled) values[name] = $(selector).value;
+  }
+  $("#save-settings").disabled = true;
+  settingsFeedback("Salvataggio in corso…");
+  try {
+    await api("/api/settings", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(values)});
+    await loadSettings();
+    await updateStatus();
+    settingsFeedback("Impostazioni salvate. Sono già attive.");
+  } catch (error) { settingsFeedback(error.message, true); }
+  finally { $("#save-settings").disabled = false; }
+}
+
+async function removeKey() {
+  $("#remove-key").disabled = true;
+  settingsFeedback("Rimozione in corso…");
+  try {
+    await api("/api/settings", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({clear_key: true})});
+    await loadSettings();
+    await updateStatus();
+    settingsFeedback("Chiave rimossa da questo PC.");
+  } catch (error) { settingsFeedback(error.message, true); }
+  finally { $("#remove-key").disabled = false; }
 }
 
 async function startSync() {
@@ -341,11 +409,23 @@ function initTheme() {
 
 initTheme();
 document.querySelectorAll(".nav-link").forEach((button) => button.addEventListener("click", () => {
-  location.hash = button.dataset.view === "chat" ? "chat" : "archive";
-  setView(button.dataset.view);
+  location.hash = button.dataset.view;
+  if (state.view !== button.dataset.view) setView(button.dataset.view);
 }));
-window.addEventListener("hashchange", () => setView(location.hash === "#chat" ? "chat" : "archive"));
+window.addEventListener("hashchange", () => {
+  const view = ["#archive", "#chat", "#settings"].includes(location.hash) ? location.hash.slice(1) : "archive";
+  if (state.view !== view) setView(view);
+});
 $("#sync-button").addEventListener("click", startSync);
+$("#settings-form").addEventListener("submit", saveSettings);
+$("#remove-key").addEventListener("click", removeKey);
+$("#toggle-key").addEventListener("click", () => {
+  const input = $("#api-key");
+  const visible = input.type === "password";
+  input.type = visible ? "text" : "password";
+  $("#toggle-key").textContent = visible ? "Nascondi" : "Mostra";
+  $("#toggle-key").setAttribute("aria-label", visible ? "Nascondi la chiave" : "Mostra la chiave");
+});
 $("#new-chat").addEventListener("click", () => { state.conversation = null; renderWelcome(); loadConversations(); $("#question").focus(); });
 $("#chat-form").addEventListener("submit", ask);
 $("#question").addEventListener("keydown", (event) => {
@@ -358,5 +438,5 @@ $("#search-input").addEventListener("input", () => {
 });
 renderWelcome();
 updateStatus();
-if (location.hash === "#chat") setView("chat");
+if (location.hash === "#chat" || location.hash === "#settings") setView(location.hash.slice(1));
 setInterval(updateStatus, 5000);
