@@ -1,5 +1,9 @@
-"""Loopback-only web app. API and static page live on the same origin."""
+"""Loopback-only web app by default. API and static page live on the same origin.
 
+To publish it behind a proxy, set HOST, ALLOWED_HOSTS and AUTH_PASSWORD."""
+
+import base64
+import hmac
 import json
 import logging
 import threading
@@ -18,9 +22,11 @@ STATIC_FILES = {"/": ("index.html", "text/html"),
 
 
 class Handler(BaseHTTPRequestHandler):
-    def send_json(self, value, code=200):
+    def send_json(self, value, code=200, headers=None):
         body = json.dumps(value, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
+        for name, header in (headers or {}).items():
+            self.send_header(name, header)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -31,6 +37,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.local_host():
             return self.send_json({"error": "Host non consentito."}, 403)
+        if not self.authorized():
+            return self.request_login()
         url = urlsplit(self.path)
         path = url.path
         query = parse_qs(url.query)
@@ -82,14 +90,36 @@ class Handler(BaseHTTPRequestHandler):
         if not origin:
             return True
         origin_url = urlsplit(origin)
-        return origin_url.scheme == "http" and origin_url.netloc == self.headers.get("Host")
+        # A proxy that terminates TLS forwards the browser's https origin unchanged.
+        return origin_url.scheme in ("http", "https") and origin_url.netloc == self.headers.get("Host")
 
     def local_host(self):
-        return urlsplit("http://" + self.headers.get("Host", "")).hostname in ("127.0.0.1", "localhost")
+        extra = {name.strip().lower() for name in setting("ALLOWED_HOSTS").split(",") if name.strip()}
+        return urlsplit("http://" + self.headers.get("Host", "")).hostname in {"127.0.0.1", "localhost", *extra}
+
+    def authorized(self):
+        """HTTP Basic auth, active only when AUTH_PASSWORD is set."""
+        password = setting("AUTH_PASSWORD")
+        if not password:
+            return True
+        scheme, _, token = self.headers.get("Authorization", "").partition(" ")
+        try:
+            user, _, given = base64.b64decode(token, validate=True).decode("utf-8").partition(":")
+        except ValueError:
+            return False
+        user_ok = hmac.compare_digest(user.encode(), setting("AUTH_USER", "antirez").encode())
+        password_ok = hmac.compare_digest(given.encode(), password.encode())
+        return scheme.lower() == "basic" and user_ok and password_ok
+
+    def request_login(self):
+        return self.send_json({"error": "Accesso riservato."}, 401,
+                              {"WWW-Authenticate": 'Basic realm="Antirez, con calma", charset="UTF-8"'})
 
     def do_POST(self):
         if not self.local_host() or not self.origin_ok():
             return self.send_json({"error": "Origine non consentita."}, 403)
+        if not self.authorized():
+            return self.request_login()
         path = urlsplit(self.path).path
         try:
             data = self.json_body()
@@ -131,9 +161,10 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(port=None):
     port = port or int(setting("PORT", "8765"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    host = setting("HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
-    print(f"Antirez è pronto: http://127.0.0.1:{port}", flush=True)
+    print(f"Antirez è pronto: http://{host}:{port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

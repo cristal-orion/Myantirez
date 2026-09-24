@@ -18,6 +18,10 @@ Dopo avere impostato la chiave, esegui **una volta** `python3 -m antirez install
 
 L'acquisizione programmata funziona anche senza la pagina aperta, quando la sessione utente del PC è attiva. Per controllare gli esiti del timer: `journalctl --user -u antirez-sync.service -n 50`.
 
+### Pubblicarlo su un server
+
+Il `Dockerfile` avvia la stessa pagina in un container (porta 8765), con archivio e `.env` nel volume `/app/data`. Fuori da questo PC servono tre variabili: `ALLOWED_HOSTS` con il dominio pubblico, `AUTH_PASSWORD` per chiedere una password a ogni visita (utente `antirez`, cambiabile con `AUTH_USER`) e, se preferisci, `GEMINI_API_KEY`. Il timer `systemd` non esiste nel container: pianifica `python -m antirez sync` con lo strumento del server (per esempio le Scheduled Tasks di Coolify). Da un IP di datacenter YouTube di solito blocca il download dell'audio, quindi la trascrizione passa a Gemini dal link del video.
+
 ## Come funziona
 
 - Feed YouTube per scoprire i nuovi video; `yt-dlp` e `ffmpeg` per estrarre l'audio in segmenti di 12 minuti, adatti alla richiesta inline.

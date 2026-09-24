@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import os
@@ -156,6 +157,44 @@ class ArchiveTests(unittest.TestCase):
         request = urllib.request.Request(base + "/api/status", headers={"Host": "external.example"})
         with self.assertRaises(urllib.error.HTTPError) as error:
             urllib.request.urlopen(request)
+        self.assertEqual(403, error.exception.code)
+
+    def test_published_server_accepts_its_domain_only_with_password(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.addCleanup(server.server_close)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+        public = {"ALLOWED_HOSTS": "antirez.example", "AUTH_PASSWORD": "segreta"}
+
+        def call(path, credentials=None, data=None, origin=None):
+            headers = {"Host": "antirez.example"}
+            if credentials:
+                headers["Authorization"] = "Basic " + base64.b64encode(credentials.encode()).decode()
+            if data is not None:
+                headers["Content-Type"] = "application/json"
+            if origin:
+                headers["Origin"] = origin
+            return urllib.request.urlopen(urllib.request.Request(base + path, data, headers))
+
+        with patch.dict(os.environ, public):
+            for credentials in (None, "antirez:sbagliata", "altro:segreta"):
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    call("/api/status", credentials)
+                self.assertEqual(401, error.exception.code)
+                self.assertIn("Basic", error.exception.headers["WWW-Authenticate"])
+            with call("/api/status", "antirez:segreta") as response:
+                self.assertEqual({}, json.load(response)["stats"])
+            with patch("antirez.server.api_key", return_value=""):
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    call("/api/sync", "antirez:segreta", b"{}", "https://antirez.example")
+                self.assertEqual(400, error.exception.code)
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    call("/api/sync", "antirez:segreta", b"{}", "https://altro.example")
+                self.assertEqual(403, error.exception.code)
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            call("/api/status", "antirez:segreta")
         self.assertEqual(403, error.exception.code)
 
     def test_settings_are_local_private_and_active_without_restart(self):

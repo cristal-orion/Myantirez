@@ -5,10 +5,10 @@ import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("ANTIREZ_DATA_DIR") or ROOT / "data")
 CHANNEL_ID = "UCDDG9vOcmgwlslJJpCWjqOg"
 CHANNEL_URL = "https://www.youtube.com/@antirez/videos"
-ENV_PATH = ROOT / ".env"
+ENV_PATH = Path(os.environ.get("ANTIREZ_ENV_FILE") or ROOT / ".env")
 MODEL_DEFAULTS = {"TRANSCRIBE_MODEL": "gemini-3.5-transcribe",
                   "CHAT_MODEL": "gemini-3.5-flash", "EMBED_MODEL": "gemini-embedding-001"}
 _write_lock = threading.Lock()
@@ -87,7 +87,7 @@ def save_settings(values):
         # Create privately, then replace atomically so a failed write cannot truncate .env.
         temporary = None
         try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=ROOT,
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=ENV_PATH.parent,
                                              prefix=".env-", delete=False) as handle:
                 temporary = Path(handle.name)
                 handle.write("\n".join(lines) + "\n")
