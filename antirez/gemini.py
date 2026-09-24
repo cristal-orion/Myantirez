@@ -2,10 +2,17 @@
 
 import base64
 import json
+import logging
+import time
 import urllib.error
 import urllib.request
 
 from .config import api_key, model
+
+LOG = logging.getLogger(__name__)
+# Overload and rate limits: Google itself says to try again later.
+RETRY_CODES = {429, 500, 502, 503, 504}
+RETRY_DELAYS = (5, 15, 45)
 
 
 class GeminiError(RuntimeError):
@@ -26,26 +33,45 @@ def request(path, payload, timeout=180):
     return send(req, timeout)
 
 
-def send(req, timeout):
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as exc:
+def retry_delay(error, default):
+    """Google may say how long to wait (RetryInfo, e.g. "37s"); never wait more than a minute."""
+    for item in error.get("details", []) if isinstance(error, dict) else []:
+        if isinstance(item, dict) and str(item.get("@type", "")).endswith("RetryInfo"):
+            try:
+                return min(60.0, max(1.0, float(str(item.get("retryDelay", "")).rstrip("s"))))
+            except ValueError:
+                pass
+    return default
+
+
+def send(req, timeout, delays=RETRY_DELAYS):
+    for delay in (*delays, None):
         try:
-            detail = json.load(exc)["error"].get("message", "")
-        except (ValueError, KeyError, TypeError):
-            detail = ""
-        # Never include response headers or request headers: those contain credentials.
-        raise GeminiError(f"Gemini HTTP {exc.code}: {detail[:300] or exc.reason}") from exc
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise GeminiError(f"Impossibile raggiungere Gemini: {exc.reason if hasattr(exc, 'reason') else exc}") from exc
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as exc:
+            try:
+                error = json.load(exc)["error"]
+                detail = error.get("message", "")
+            except (ValueError, KeyError, TypeError, AttributeError):
+                error, detail = {}, ""
+            if exc.code in RETRY_CODES and delay is not None:
+                wait = retry_delay(error, delay)
+                LOG.warning("Gemini HTTP %s, nuovo tentativo tra %s s", exc.code, wait)
+                time.sleep(wait)
+                continue
+            # Never include response headers or request headers: those contain credentials.
+            raise GeminiError(f"Gemini HTTP {exc.code}: {detail[:300] or exc.reason}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise GeminiError(f"Impossibile raggiungere Gemini: {exc.reason if hasattr(exc, 'reason') else exc}") from exc
 
 
 def check(key, models):
     """Read-only calls with no quota cost: is the key valid, does each model exist for it?"""
     def get(path):
+        # No retries: the settings page is waiting for an answer.
         return send(urllib.request.Request("https://generativelanguage.googleapis.com/" + path,
-                                           headers={"x-goog-api-key": key}), 30)
+                                           headers={"x-goog-api-key": key}), 30, delays=())
     try:
         get("v1beta/models?pageSize=1")
     except GeminiError as exc:

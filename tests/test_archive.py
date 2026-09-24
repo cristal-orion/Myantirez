@@ -248,11 +248,47 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual("", config.api_key())
             self.assertEqual("gemini-2.5-flash", config.model("CHAT_MODEL", "default"))
 
+    def test_gemini_retries_overload_but_not_invalid_requests(self):
+        def failure(code, error):
+            body = io.BytesIO(json.dumps({"error": error}).encode())
+            return urllib.error.HTTPError("https://example", code, "errore", {}, body)
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        busy = {"message": "high demand"}
+        limited = {"message": "quota", "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "7s"}]}
+        answers = [failure(503, busy), failure(429, limited), Response(b'{"ok": true}')]
+        with patch.object(urllib.request, "urlopen", side_effect=answers) as urlopen, \
+             patch.object(gemini.time, "sleep") as sleep:
+            self.assertEqual({"ok": True}, gemini.send(urllib.request.Request("https://example"), 5))
+        self.assertEqual(3, urlopen.call_count)
+        self.assertEqual([5, 7.0], [call.args[0] for call in sleep.call_args_list])
+
+        with patch.object(urllib.request, "urlopen", side_effect=[failure(503, busy) for _ in range(4)]) as urlopen, \
+             patch.object(gemini.time, "sleep"):
+            with self.assertRaisesRegex(gemini.GeminiError, "HTTP 503: high demand"):
+                gemini.send(urllib.request.Request("https://example"), 5)
+        self.assertEqual(4, urlopen.call_count)
+
+        for delays, code in ((gemini.RETRY_DELAYS, 400), ((), 503)):
+            with patch.object(urllib.request, "urlopen", side_effect=[failure(code, busy)]) as urlopen, \
+                 patch.object(gemini.time, "sleep") as sleep:
+                with self.assertRaises(gemini.GeminiError):
+                    gemini.send(urllib.request.Request("https://example"), 5, delays)
+            self.assertEqual(1, urlopen.call_count)
+            sleep.assert_not_called()
+
     def test_key_check_reports_rejected_key_and_missing_models(self):
         models = dict(config.MODEL_DEFAULTS)
         calls = []
 
-        def google(req, timeout):
+        def google(req, timeout, delays):
+            self.assertEqual((), delays)
             calls.append((req.full_url, req.get_header("X-goog-api-key"), req.get_method()))
             if req.get_header("X-goog-api-key") == "sbagliata":
                 raise gemini.GeminiError("Gemini HTTP 400: API key not valid.")
