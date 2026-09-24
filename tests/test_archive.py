@@ -72,6 +72,17 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual("video", db.video("abc123")["transcript_method"])
         self.assertEqual("Testo dal video", db.video("abc123")["transcript"])
 
+    def test_duration_comes_from_channel_listing_when_video_is_blocked(self):
+        listing = subprocess.CompletedProcess([], 0, stdout="abc123 1727.0\nlive NA\n", stderr="")
+        blocked = subprocess.CalledProcessError(1, "yt-dlp")
+        with patch.object(subprocess, "run", side_effect=[blocked, listing]) as run:
+            self.assertEqual(1727, ingest.video_duration("abc123"))
+        self.assertIn("--flat-playlist", run.call_args.args[0])
+        with patch.object(subprocess, "run", side_effect=[blocked, listing]):
+            self.assertIsNone(ingest.video_duration("live"))
+        with patch.object(subprocess, "run", side_effect=[blocked, blocked]):
+            self.assertIsNone(ingest.video_duration("abc123"))
+
     def test_video_transcription_uses_time_windows(self):
         response = {"candidates": [{"content": {"parts": [{"text": "Parole dette."}]}, "finishReason": "STOP"}]}
         with patch.object(gemini, "request", return_value=response) as request:

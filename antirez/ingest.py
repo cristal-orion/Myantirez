@@ -105,7 +105,23 @@ def describe(exc):
     return str(exc)
 
 
+def channel_durations(limit=100):
+    """The flat channel listing still works when YouTube blocks single videos."""
+    result = subprocess.run(["yt-dlp", "--flat-playlist", "--playlist-end", str(limit), "--no-warnings",
+                             "--print", "%(id)s %(duration)s", CHANNEL_URL],
+                            capture_output=True, text=True, check=True, timeout=180)
+    durations = {}
+    for line in result.stdout.splitlines():
+        ident, _, seconds = line.partition(" ")
+        try:
+            durations[ident] = max(1, round(float(seconds)))
+        except ValueError:
+            continue  # "NA" for live streams or unknown durations
+    return durations
+
+
 def video_duration(video_id):
+    """Without a duration Gemini gets the whole video at once and long ones come back truncated."""
     try:
         result = subprocess.run(["yt-dlp", "--no-playlist", "--skip-download", "--no-warnings",
                                  "--print", "%(duration)s", f"https://www.youtube.com/watch?v={video_id}"],
@@ -113,6 +129,10 @@ def video_duration(video_id):
         seconds = float(result.stdout.strip())
         return max(1, round(seconds))
     except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    try:
+        return channel_durations().get(video_id)
+    except (OSError, subprocess.SubprocessError):
         return None
 
 

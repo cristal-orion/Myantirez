@@ -10,7 +10,7 @@ function element(tag, className = "", text = "") {
 
 function appendInline(parent, text, sources = []) {
   const byNumber = new Map(sources.map((source) => [source.number, source]));
-  for (const part of text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[\d+\])/g)) {
+  for (const part of text.split(/(\*\*[^*]+\*\*|\*[^*\s](?:[^*]*[^*\s])?\*|`[^`]+`|\[\d+\])/g)) {
     const cite = /^\[(\d+)\]$/.exec(part);
     const source = cite && byNumber.get(Number(cite[1]));
     if (source) {
@@ -21,6 +21,7 @@ function appendInline(parent, text, sources = []) {
       link.title = source.title;
       parent.append(link);
     } else if (part.startsWith("**") && part.endsWith("**")) parent.append(element("strong", "", part.slice(2, -2)));
+    else if (/^\*[^*\s](?:[^*]*[^*\s])?\*$/.test(part)) parent.append(element("em", "", part.slice(1, -1)));
     else if (part.startsWith("`") && part.endsWith("`")) parent.append(element("code", "", part.slice(1, -1)));
     else parent.append(document.createTextNode(part));
   }
