@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Antirez, con calma — l'archivio da leggere</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <a class="brand" href="/" aria-label="Antirez, con calma — home">
+        <span class="brand-mark" aria-hidden="true">a<span class="brand-dot">.</span></span>
+        <span class="brand-name">antirez<span class="brand-comma">,</span><br><strong>con calma</strong></span>
+      </a>
+      <nav class="main-nav" aria-label="Navigazione principale">
+        <button class="nav-link selected" type="button" data-view="archive" aria-current="page">L'archivio</button>
+        <button class="nav-link" type="button" data-view="chat">Chiedi all'archivio <span aria-hidden="true">↗</span></button>
+      </nav>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Passa al tema scuro">◐ <span>Tema</span></button>
+    </header>
+
+    <main>
+      <div class="introduction">
+        <div>
+          <span class="eyebrow">UN VIDEO ALLA VOLTA · SENZA FRETTA</span>
+          <h1>Le idee restano.<br><em>Anche quando non hai tempo.</em></h1>
+        </div>
+        <div class="intro-aside">
+          <span class="intro-scribble" aria-hidden="true">✳</span>
+          <p>I video di Salvatore, raccolti qui per leggerli quando vuoi. Riassunti, parole sue e un archivio a cui fare domande.</p>
+        </div>
+      </div>
+
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <div class="toolbar">
+        <div class="status-group"><span id="status-indicator" class="status-indicator" aria-hidden="true"></span><span id="status-text">Controllo l'archivio…</span></div>
+        <button id="sync-button" class="sync-button" type="button">Controlla nuovi video <span aria-hidden="true">↗</span></button>
+      </div>
+
+      <section id="archive-view" class="view archive-layout" aria-label="Archivio video">
+        <aside class="video-index">
+          <div class="index-heading"><h2>Da leggere <span id="video-count" class="count">0</span></h2><span class="index-deco" aria-hidden="true">↘</span></div>
+          <label class="search-box"><span class="sr-only">Cerca tra titoli e trascrizioni</span><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="Cerca un'idea, un video…" autocomplete="off"></label>
+          <div id="video-list" class="video-list" aria-live="polite"></div>
+        </aside>
+        <article id="reader" class="reader" aria-label="Lettura del video"></article>
+      </section>
+
+      <section id="chat-view" class="view chat-layout" aria-label="Chat con l'archivio" hidden>
+        <aside class="chat-index">
+          <div class="chat-index-head"><h2>Conversazioni</h2><button id="new-chat" class="new-chat" type="button">+ Nuova</button></div>
+          <div id="conversation-list" class="conversation-list"></div>
+          <p class="chat-side-note">Le risposte si appoggiano alle trascrizioni. Puoi sempre risalire al video di partenza.</p>
+        </aside>
+        <div class="chat-room">
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <form id="chat-form" class="chat-form">
+            <label for="question" class="sr-only">La tua domanda</label>
+            <textarea id="question" placeholder="Chiedi qualcosa ai video…" rows="2" maxlength="2000" required></textarea>
+            <div class="chat-form-bottom"><span>Invio per chiedere · Maiuscolo + Invio per andare a capo</span><button id="send-button" type="submit">Chiedi <span aria-hidden="true">↗</span></button></div>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer"><span>Fatto per non perdere il filo.</span><a href="https://www.youtube.com/@antirez/videos" target="_blank" rel="noopener noreferrer">Il canale di Salvatore ↗</a><span>Un archivio, non una memoria infallibile.</span></footer>
+  </div>
+</body>
+</html>

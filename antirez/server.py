@@ -1,0 +1,139 @@
+"""Loopback-only web app. API and static page live on the same origin."""
+
+import json
+import logging
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+from . import chat, db, ingest
+from .config import ROOT, api_key
+
+LOG = logging.getLogger(__name__)
+STATIC = ROOT / "static"
+STATIC_FILES = {"/": ("index.html", "text/html"),
+                "/app.css": ("app.css", "text/css"),
+                "/app.js": ("app.js", "text/javascript")}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def send_json(self, value, code=200):
+        body = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if not self.local_host():
+            return self.send_json({"error": "Host non consentito."}, 403)
+        url = urlsplit(self.path)
+        path = url.path
+        query = parse_qs(url.query)
+        try:
+            if path == "/api/status":
+                return self.send_json({"stats": db.stats(), "has_key": bool(api_key()),
+                                       "last_sync": db.setting("last_sync"),
+                                       "error": db.setting("sync_error"),
+                                       "running": ingest.is_running()})
+            if path == "/api/videos":
+                return self.send_json(db.videos(query.get("q", [""])[0][:200], limit=200))
+            if path.startswith("/api/videos/"):
+                item = db.video(path.rsplit("/", 1)[-1])
+                return self.send_json(item) if item else self.send_json({"error": "Video non trovato."}, 404)
+            if path == "/api/conversations":
+                return self.send_json(db.conversations())
+            if path.startswith("/api/conversations/"):
+                item = db.conversation(int(path.rsplit("/", 1)[-1]))
+                return self.send_json(item) if item else self.send_json({"error": "Chat non trovata."}, 404)
+            if path in STATIC_FILES:
+                name, mimetype = STATIC_FILES[path]
+                body = (STATIC / name).read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", mimetype + "; charset=utf-8")
+                self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; img-src 'self' https://i.ytimg.com; connect-src 'self'; script-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                return self.wfile.write(body)
+            return self.send_json({"error": "Pagina non trovata."}, 404)
+        except (ValueError, OverflowError):
+            return self.send_json({"error": "Indirizzo non valido."}, 400)
+        except Exception:
+            LOG.exception("Errore durante la richiesta")
+            return self.send_json({"error": "Errore interno. Controlla il terminale."}, 500)
+
+    def json_body(self):
+        if self.headers.get("Content-Type", "").split(";", 1)[0].lower() != "application/json":
+            raise ValueError("Serve un corpo JSON.")
+        size = int(self.headers.get("Content-Length", "0"))
+        if size < 0 or size > 32_000:
+            raise ValueError("Richiesta troppo lunga.")
+        return json.loads(self.rfile.read(size))
+
+    def origin_ok(self):
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        origin_url = urlsplit(origin)
+        return origin_url.scheme == "http" and origin_url.netloc == self.headers.get("Host")
+
+    def local_host(self):
+        return urlsplit("http://" + self.headers.get("Host", "")).hostname in ("127.0.0.1", "localhost")
+
+    def do_POST(self):
+        if not self.local_host() or not self.origin_ok():
+            return self.send_json({"error": "Origine non consentita."}, 403)
+        path = urlsplit(self.path).path
+        try:
+            data = self.json_body()
+            if not isinstance(data, dict):
+                raise ValueError("Richiesta non valida.")
+            if path == "/api/sync":
+                if not api_key():
+                    return self.send_json({"error": "Aggiungi GEMINI_API_KEY al file .env e riavvia l'app."}, 400)
+                if ingest.is_running():
+                    return self.send_json({"error": "Acquisizione già in corso."}, 409)
+                threading.Thread(target=self.background_sync, daemon=True).start()
+                return self.send_json({"started": True}, 202)
+            if path == "/api/chat":
+                question = data.get("question", "")
+                ident = data.get("conversation_id")
+                if not isinstance(question, str) or not question.strip() or len(question) > 2000:
+                    raise ValueError("Scrivi una domanda di massimo 2000 caratteri.")
+                if ident is not None and (not isinstance(ident, int) or isinstance(ident, bool) or ident <= 0):
+                    raise ValueError("Conversazione non valida.")
+                return self.send_json(chat.answer(question.strip(), ident))
+            return self.send_json({"error": "Pagina non trovata."}, 404)
+        except (ValueError, json.JSONDecodeError) as exc:
+            return self.send_json({"error": str(exc)}, 400)
+        except chat.gemini.GeminiError as exc:
+            return self.send_json({"error": str(exc)}, 502)
+        except Exception:
+            LOG.exception("Errore durante la richiesta")
+            return self.send_json({"error": "Errore interno. Controlla il terminale."}, 500)
+
+    @staticmethod
+    def background_sync():
+        try:
+            ingest.sync()
+        except Exception:
+            LOG.exception("Acquisizione fallita")
+
+
+def serve(port=None):
+    port = port or int(os.environ.get("PORT", "8765"))
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.daemon_threads = True
+    print(f"Antirez è pronto: http://127.0.0.1:{port}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
