@@ -89,6 +89,19 @@ class ArchiveTests(unittest.TestCase):
             captions.assert_called_once_with("abc123")
         self.assertEqual("captions", db.video("abc123")["transcript_method"])
 
+    def test_failed_fallbacks_keep_gemini_error_and_youtube_reason(self):
+        self.add_video()
+        blocked = subprocess.CalledProcessError(1, "yt-dlp", stderr=b"WARNING: lento\nERROR: Sign in to confirm you're not a bot\n")
+        with patch.object(ingest, "download_and_split", side_effect=blocked), \
+             patch.object(ingest, "video_duration", return_value=None), \
+             patch.object(gemini, "video_transcription", side_effect=gemini.GeminiError("Gemini HTTP 400: API key not valid.")), \
+             patch.object(ingest, "youtube_captions", side_effect=blocked):
+            ingest.process_video("abc123")
+        item = db.video("abc123")
+        self.assertEqual("error", item["status"])
+        self.assertIn("API key not valid", item["error"])
+        self.assertIn("yt-dlp: ERROR: Sign in to confirm", item["error"])
+
     def test_sync_starts_with_ten_and_retries_failed_video(self):
         items = [{"id": f"v{i}", "title": f"Video {i}", "published": f"2026-09-{22-i:02d}T12:00:00Z",
                   "url": f"https://www.youtube.com/watch?v=v{i}"} for i in range(15)]

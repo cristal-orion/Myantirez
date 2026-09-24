@@ -94,6 +94,17 @@ def download_and_split(video_id, workdir):
     return chunks
 
 
+def describe(exc):
+    """yt-dlp explains a failure on stderr; its exit status alone says nothing."""
+    stderr = getattr(exc, "stderr", None)
+    if isinstance(exc, subprocess.CalledProcessError) and stderr:
+        text = stderr.decode("utf-8", "replace") if isinstance(stderr, bytes) else stderr
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if lines:
+            return "yt-dlp: " + lines[-1][:300]
+    return str(exc)
+
+
 def video_duration(video_id):
     try:
         result = subprocess.run(["yt-dlp", "--no-playlist", "--skip-download", "--no-warnings",
@@ -161,7 +172,7 @@ def process_video(ident):
         transcript = "\n\n".join(parts)
         method = "audio"
     except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
-        LOG.warning("Audio non disponibile per %s (%s): uso il video con Gemini Flash", ident, exc)
+        LOG.warning("Audio non disponibile per %s (%s): uso il video con Gemini Flash", ident, describe(exc))
         try:
             transcript = gemini.video_transcription(item["url"], video_duration(ident))
             method = "video"
@@ -171,8 +182,10 @@ def process_video(ident):
                 transcript = youtube_captions(ident)
                 method = "captions"
             except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as caption_error:
-                db.update_video(ident, status="error", error=str(caption_error)[:500])
-                LOG.warning("Sottotitoli %s: %s", ident, caption_error)
+                # The Gemini error usually explains the failure; captions are only the last resort.
+                error = f"{fallback_error} Sottotitoli: {describe(caption_error)}"
+                db.update_video(ident, status="error", error=error[:500])
+                LOG.warning("Sottotitoli %s: %s", ident, describe(caption_error))
                 return
     except gemini.GeminiError as exc:
         db.update_video(ident, status="error", error=str(exc)[:500])
