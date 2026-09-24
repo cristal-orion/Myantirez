@@ -3,6 +3,7 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from .config import DATA_DIR
 
@@ -72,6 +73,10 @@ def initialize():
         """)
         if "transcript_method" not in {row["name"] for row in db.execute("PRAGMA table_info(videos)")}:
             db.execute("ALTER TABLE videos ADD COLUMN transcript_method TEXT NOT NULL DEFAULT 'audio'")
+        # "" is the owner of the archive; guests get their own conversations.
+        if "owner" not in {row["name"] for row in db.execute("PRAGMA table_info(conversations)")}:
+            db.execute("ALTER TABLE conversations ADD COLUMN owner TEXT NOT NULL DEFAULT ''")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_conversations_owner ON conversations(owner, updated_at)")
 
 
 def setting(key, value=None):
@@ -161,14 +166,15 @@ def lexical_passages(question, limit=24):
             (match, limit))]
 
 
-def conversations():
+def conversations(owner=""):
     with connect() as db:
-        return [dict(row) for row in db.execute("SELECT * FROM conversations ORDER BY updated_at DESC")]
+        return [dict(row) for row in db.execute(
+            "SELECT * FROM conversations WHERE owner=? ORDER BY updated_at DESC", (owner,))]
 
 
-def conversation(ident):
+def conversation(ident, owner=""):
     with connect() as db:
-        row = db.execute("SELECT * FROM conversations WHERE id=?", (ident,)).fetchone()
+        row = db.execute("SELECT * FROM conversations WHERE id=? AND owner=?", (ident, owner)).fetchone()
         if not row:
             return None
         messages = [dict(msg) for msg in db.execute("SELECT * FROM messages WHERE conversation_id=? ORDER BY id", (ident,))]
@@ -177,10 +183,23 @@ def conversation(ident):
         return {**dict(row), "messages": messages}
 
 
-def add_conversation(title):
+def add_conversation(title, owner=""):
     with connect() as db:
-        cursor = db.execute("INSERT INTO conversations(title,created_at,updated_at) VALUES(?,?,?)", (title, now(), now()))
+        cursor = db.execute("INSERT INTO conversations(title,owner,created_at,updated_at) VALUES(?,?,?,?)",
+                            (title, owner, now(), now()))
         return cursor.lastrowid
+
+
+def today_start(zone="Europe/Rome"):
+    """Midnight in Italy as a UTC timestamp, comparable with created_at."""
+    midnight = datetime.now(ZoneInfo(zone)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def questions_since(owner, since):
+    with connect() as db:
+        return db.execute("""SELECT count(*) FROM messages m JOIN conversations c ON c.id = m.conversation_id
+                             WHERE c.owner=? AND m.role='user' AND m.created_at >= ?""", (owner, since)).fetchone()[0]
 
 
 def add_message(conversation_id, role, content, sources=None):

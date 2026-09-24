@@ -240,6 +240,70 @@ class ArchiveTests(unittest.TestCase):
             call("/api/status", "antirez:segreta")
         self.assertEqual(403, error.exception.code)
 
+    def test_guest_has_own_chats_a_daily_limit_and_no_settings(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.addCleanup(server.server_close)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+        public = {"ALLOWED_HOSTS": "antirez.example", "AUTH_PASSWORD": "segreta",
+                  "GUEST_ACCOUNTS": "Antonio:amico, Mario:altro", "GUEST_CHAT_LIMIT": "2"}
+
+        def call(path, credentials, payload=None):
+            headers = {"Host": "antirez.example",
+                       "Authorization": "Basic " + base64.b64encode(credentials.encode()).decode()}
+            data = None if payload is None else json.dumps(payload).encode()
+            if data is not None:
+                headers["Content-Type"] = "application/json"
+            with urllib.request.urlopen(urllib.request.Request(base + path, data, headers)) as response:
+                return json.load(response)
+
+        def refused(path, credentials, payload=None):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                call(path, credentials, payload)
+            return error.exception.code
+
+        with patch.dict(os.environ, public), patch("antirez.chat.api_key", return_value="k"), \
+             patch.object(chat, "retrieve", return_value=[]):
+            owner_chat = call("/api/chat", "antirez:segreta", {"question": "Domanda mia"})
+            self.assertIsNone(owner_chat["chat_left"])
+            account = call("/api/status", "ANTONIO:amico")["account"]
+            self.assertEqual({"name": "Antonio", "admin": False, "chat_left": 2, "chat_limit": 2}, account)
+            self.assertEqual(401, refused("/api/status", "antonio:segreta"))
+            for path, payload in (("/api/settings", None), ("/api/settings", {"CHAT_MODEL": "x"}),
+                                  ("/api/settings/test", {}), ("/api/sync", {})):
+                self.assertEqual(403, refused(path, "antonio:amico", payload))
+            first = call("/api/chat", "antonio:amico", {"question": "Prima"})
+            self.assertEqual(1, first["chat_left"])
+            self.assertEqual(404, refused(f"/api/conversations/{owner_chat['conversation_id']}", "antonio:amico"))
+            self.assertEqual(400, refused("/api/chat", "antonio:amico",
+                                          {"question": "Continuo la tua", "conversation_id": owner_chat["conversation_id"]}))
+            second = call("/api/chat", "antonio:amico", {"question": "Seconda", "conversation_id": first["conversation_id"]})
+            self.assertEqual(0, second["chat_left"])
+            self.assertEqual(429, refused("/api/chat", "antonio:amico", {"question": "Terza"}))
+            self.assertEqual(["Prima"], [item["title"] for item in call("/api/conversations", "antonio:amico")])
+            self.assertEqual(["Domanda mia"], [item["title"] for item in call("/api/conversations", "antirez:segreta")])
+            self.assertEqual(2, call("/api/status", "mario:altro")["account"]["chat_left"])
+            call("/api/chat", "antirez:segreta", {"question": "Il proprietario non ha limiti"})
+            # A new Italian day starts the count again.
+            with patch.object(db, "today_start", return_value="2999-01-01T00:00:00+00:00"):
+                self.assertEqual(2, call("/api/status", "antonio:amico")["account"]["chat_left"])
+
+    def test_old_conversations_are_kept_for_the_owner(self):
+        with db.connect() as connection:
+            connection.executescript("""
+                DROP TABLE messages; DROP TABLE conversations;
+                CREATE TABLE conversations (id INTEGER PRIMARY KEY, title TEXT NOT NULL,
+                                            created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                                       role TEXT NOT NULL, content TEXT NOT NULL, sources TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL);
+                INSERT INTO conversations VALUES (1, 'Vecchia', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00');
+            """)
+        db.initialize()
+        self.assertEqual(["Vecchia"], [item["title"] for item in db.conversations()])
+        self.assertEqual([], db.conversations("antonio"))
+
     def test_settings_are_local_private_and_active_without_restart(self):
         env = Path(self.temporary.name) / ".env"
         env.write_text("# Preferenze locali\nPORT=8765\nCHAT_MODEL=vecchio\n", encoding="utf-8")

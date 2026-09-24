@@ -30,7 +30,7 @@ function appendInline(parent, text, sources = []) {
 function formattedText(text, sources = []) {
   const area = element("div", "formatted-text");
   let paragraph = [];
-  let list = null;
+  let lists = [];  // open lists from the outermost: {indent, node}
   function flush() {
     if (paragraph.length) {
       const line = element("p");
@@ -38,14 +38,17 @@ function formattedText(text, sources = []) {
       area.append(line);
       paragraph = [];
     }
-    list = null;
+    lists = [];
   }
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (!line) { flush(); continue; }
     const heading = /^#{1,4}\s+(.+)$/.exec(line);
     const bullet = /^(?:[-*]\s+|\d+[.)]\s+)(.+)$/.exec(line);
-    if (heading) {
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) {
+      flush();
+      area.append(element("hr"));
+    } else if (heading) {
       flush();
       const node = element("h4");
       appendInline(node, heading[1], sources);
@@ -53,11 +56,24 @@ function formattedText(text, sources = []) {
     } else if (bullet) {
       if (paragraph.length) flush();
       const kind = /^\d/.test(line) ? "ol" : "ul";
-      if (!list || list.tagName.toLowerCase() !== kind) { list = element(kind); area.append(list); }
+      const indent = raw.replace(/\t/g, "    ").search(/\S/);
+      while (lists.length && indent < lists[lists.length - 1].indent) lists.pop();
+      let top = lists[lists.length - 1];
+      if (!top || indent > top.indent) {
+        // A deeper bullet opens a list inside the previous item.
+        const node = element(kind);
+        (top ? top.node.lastElementChild : area).append(node);
+        top = {indent, node};
+        lists.push(top);
+      } else if (top.node.tagName.toLowerCase() !== kind) {
+        const node = element(kind);
+        top.node.after(node);
+        top = lists[lists.length - 1] = {indent, node};
+      }
       const node = element("li");
       appendInline(node, bullet[1], sources);
-      list.append(node);
-    } else { list = null; paragraph.push(line); }
+      top.node.append(node);
+    } else { lists = []; paragraph.push(line); }
   }
   flush();
   return area;
@@ -83,7 +99,27 @@ function prettyDate(value) {
   return Number.isNaN(date.getTime()) ? "Data non disponibile" : new Intl.DateTimeFormat("it-IT", {day: "numeric", month: "long", year: "numeric"}).format(date);
 }
 
+function isAdmin() {
+  return !state.account || state.account.admin;
+}
+
+function applyAccount(account) {
+  state.account = account;
+  const admin = isAdmin();
+  $('.nav-link[data-view="settings"]').hidden = !admin;
+  $("#sync-button").hidden = !admin;
+  const allowance = $("#chat-allowance");
+  allowance.hidden = admin;
+  if (!admin) {
+    allowance.textContent = account.chat_left
+      ? `${account.chat_left === 1 ? "Ti resta 1 domanda" : `Ti restano ${account.chat_left} domande`} su ${account.chat_limit} oggi`
+      : "Domande di oggi finite: si riparte a mezzanotte";
+  }
+  if (!admin && state.view === "settings") { history.replaceState(null, "", "#archive"); setView("archive"); }
+}
+
 function setView(view) {
+  if (view === "settings" && !isAdmin()) view = "archive";
   state.view = view;
   document.body.dataset.view = view;
   $("#archive-view").hidden = view !== "archive";
@@ -109,7 +145,7 @@ function emptyReader() {
   area.append(element("div", "empty-art", "a."));
   area.append(element("h2", "", "C'è spazio per nuove idee."));
   area.append(element("p", "", "Qui troverai il riassunto e la trascrizione dei video. Inizia con «Controlla nuovi video»: la prima volta raccoglieremo gli ultimi dieci."));
-  if (!state.hasKey) {
+  if (!state.hasKey && isAdmin()) {
     const help = element("p", "empty-help", "Prima, aggiungi la chiave Gemini nelle Impostazioni.");
     const link = element("a", "settings-shortcut", "Apri Impostazioni ↗");
     link.href = "#settings";
@@ -213,6 +249,7 @@ async function updateStatus() {
     $("#status-indicator").classList.toggle("busy", info.running);
     $("#sync-button").disabled = info.running || !info.has_key;
     $("#sync-button").title = info.has_key ? "" : "Aggiungi la chiave Gemini nelle Impostazioni";
+    applyAccount(info.account);
     const keyChanged = state.hasKey !== info.has_key;
     state.hasKey = info.has_key;
     if (keyChanged && !state.videos.length && !$("#search-input").value) emptyReader();
@@ -410,6 +447,7 @@ async function ask(event) {
     const result = await api("/api/chat", {method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({question, conversation_id: state.conversation})});
     $("#question").value = "";
+    if (result.chat_left != null) applyAccount({...state.account, chat_left: result.chat_left});
     await selectConversation(result.conversation_id);
   } catch (error) { showNotice(error.message); }
   finally {
@@ -464,6 +502,7 @@ $("#search-input").addEventListener("input", () => {
   searchTimer = setTimeout(() => loadVideos().catch((error) => showNotice(error.message)), 250);
 });
 renderWelcome();
-updateStatus();
-if (location.hash === "#chat" || location.hash === "#settings") setView(location.hash.slice(1));
+updateStatus().then(() => {
+  if (location.hash === "#chat" || location.hash === "#settings") setView(location.hash.slice(1));
+});
 setInterval(updateStatus, 5000);

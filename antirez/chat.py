@@ -47,11 +47,11 @@ def retrieve(question):
     return chosen
 
 
-def answer(question, conversation_id=None):
+def answer(question, conversation_id=None, owner=""):
     if not api_key():
         raise gemini.GeminiError("Inserisci GEMINI_API_KEY nel file .env e riavvia l'app.")
     if conversation_id is not None:
-        previous = db.conversation(conversation_id)
+        previous = db.conversation(conversation_id, owner)
         if previous is None:
             raise ValueError("Conversazione non trovata.")
     else:
@@ -83,7 +83,7 @@ def answer(question, conversation_id=None):
                     "url": item["url"], "excerpt": item["body"][:380]}
                    for index, item in enumerate(selected, start=1)]
     if conversation_id is None:
-        conversation_id = db.add_conversation(question[:70])
+        conversation_id = db.add_conversation(question[:70], owner)
     db.add_message(conversation_id, "user", question)
     db.add_message(conversation_id, "assistant", reply, sources)
     return {"conversation_id": conversation_id, "answer": reply, "sources": sources}
