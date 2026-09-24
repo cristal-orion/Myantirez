@@ -51,25 +51,45 @@ def public_settings():
             "locked": [name for name in ("GEMINI_API_KEY", *MODEL_DEFAULTS) if name in os.environ]}
 
 
+def clean_key(key):
+    if not isinstance(key, str) or len(key) > 512 or any(ord(c) < 32 for c in key):
+        raise ValueError("Chiave API non valida.")
+    return key.strip()
+
+
+def clean_model(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", value.strip()):
+        raise ValueError("Il nome del modello deve contenere solo lettere, numeri, punti, _ o -.")
+    return value.strip()
+
+
+def settings_to_test(values):
+    """The key and models typed in the page, falling back to the saved ones."""
+    if values.keys() - {"api_key", *MODEL_DEFAULTS}:
+        raise ValueError("Impostazione non riconosciuta.")
+    typed = clean_key(values.get("api_key", ""))
+    key = typed or api_key()
+    if not key:
+        raise ValueError("Incolla una chiave da provare oppure salvane una.")
+    models = {name: clean_model(values[name]) if name in values else model(name, default)
+              for name, default in MODEL_DEFAULTS.items()}
+    return key, models, bool(typed)
+
+
 def save_settings(values):
     allowed = {"api_key", "clear_key", *MODEL_DEFAULTS}
     if values.keys() - allowed:
         raise ValueError("Impostazione non riconosciuta.")
-    key = values.get("api_key", "")
+    key = clean_key(values.get("api_key", ""))
     clear = values.get("clear_key", False)
-    if not isinstance(key, str) or len(key) > 512 or any(ord(c) < 32 for c in key):
-        raise ValueError("Chiave API non valida.")
-    if not isinstance(clear, bool) or (clear and key.strip()):
+    if not isinstance(clear, bool) or (clear and key):
         raise ValueError("Scegli se salvare o rimuovere la chiave.")
     updates = {}
-    if key.strip() or clear:
-        updates["GEMINI_API_KEY"] = "" if clear else key.strip()
+    if key or clear:
+        updates["GEMINI_API_KEY"] = "" if clear else key
     for name in MODEL_DEFAULTS:
         if name in values:
-            value = values[name]
-            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", value.strip()):
-                raise ValueError("Il nome del modello deve contenere solo lettere, numeri, punti, _ o -.")
-            updates[name] = value.strip()
+            updates[name] = clean_model(values[name])
     if any(name in os.environ for name in updates):
         raise ValueError("Una di queste impostazioni è gestita dall'ambiente del sistema e non si può cambiare qui.")
     if not updates:

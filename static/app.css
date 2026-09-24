@@ -207,6 +207,12 @@ body[data-view="settings"] .introduction, body[data-view="settings"] .toolbar { 
 .secret-input button { flex: 0 0 auto; padding: 2px 0 2px 8px; border: 0; background: transparent; color: var(--accent); font-size: .75rem; font-weight: 800; }
 .field-help { margin: 8px 0 0; color: var(--ink-soft); font-size: .76rem; line-height: 1.6; }
 .field-help a { color: var(--accent); font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+.key-test { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-top: 14px; }
+.test-key { flex: 0 0 auto; padding: 8px 14px; border: 1px solid var(--accent); border-radius: 6px; background: transparent; color: var(--accent); font-size: .76rem; font-weight: 800; }
+.test-key:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
+#key-test-result { flex: 1 1 220px; min-width: 0; margin: 0; color: var(--ink-soft); font-size: .76rem; line-height: 1.6; overflow-wrap: anywhere; }
+#key-test-result.ok { color: var(--ink); font-weight: 700; }
+#key-test-result.error { color: var(--error); font-weight: 700; }
 .remove-key { margin-top: 14px; padding: 0; border: 0; background: transparent; color: var(--error); font-size: .74rem; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
 .model-fields { display: grid; gap: 25px; }
 .model-fields .field-help { margin: 0 0 9px; }

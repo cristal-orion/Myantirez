@@ -227,6 +227,7 @@ async function updateStatus() {
 }
 
 const modelFields = {TRANSCRIBE_MODEL: "#transcribe-model", CHAT_MODEL: "#chat-model", EMBED_MODEL: "#embed-model"};
+const keyTestHint = $("#key-test-result").textContent;
 
 function settingsFeedback(message, error = false) {
   const target = $("#settings-feedback");
@@ -248,12 +249,36 @@ async function loadSettings() {
     $("#toggle-key").textContent = "Mostra";
     $("#toggle-key").setAttribute("aria-label", "Mostra la chiave");
     $("#remove-key").hidden = !settings.has_key || locked.has("GEMINI_API_KEY");
+    keyTestResult(keyTestHint);
     for (const [name, selector] of Object.entries(modelFields)) {
       $(selector).value = settings.models[name];
       $(selector).disabled = locked.has(name);
       $(selector).title = locked.has(name) ? "Gestito dall’ambiente del sistema" : "";
     }
   } catch (error) { settingsFeedback(error.message, true); }
+}
+
+function keyTestResult(message, outcome = "") {
+  const target = $("#key-test-result");
+  target.textContent = message;
+  target.classList.toggle("ok", outcome === "ok");
+  target.classList.toggle("error", outcome === "error");
+}
+
+async function testKey() {
+  const values = {};
+  if (!$("#api-key").disabled && $("#api-key").value.trim()) values.api_key = $("#api-key").value;
+  for (const [name, selector] of Object.entries(modelFields)) {
+    if (!$(selector).disabled) values[name] = $(selector).value;
+  }
+  $("#test-key").disabled = true;
+  keyTestResult("Chiedo a Google…");
+  try {
+    const result = await api("/api/settings/test", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(values)});
+    const source = result.tested === "typed" ? "Chiave incollata (non ancora salvata): " : "Chiave salvata: ";
+    keyTestResult(source + result.message, result.ok ? "ok" : "error");
+  } catch (error) { keyTestResult(error.message, "error"); }
+  finally { $("#test-key").disabled = false; }
 }
 
 async function saveSettings(event) {
@@ -419,6 +444,7 @@ window.addEventListener("hashchange", () => {
 $("#sync-button").addEventListener("click", startSync);
 $("#settings-form").addEventListener("submit", saveSettings);
 $("#remove-key").addEventListener("click", removeKey);
+$("#test-key").addEventListener("click", testKey);
 $("#toggle-key").addEventListener("click", () => {
   const input = $("#api-key");
   const visible = input.type === "password";

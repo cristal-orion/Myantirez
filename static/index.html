@@ -79,6 +79,7 @@
               <label for="api-key">Chiave API</label>
               <div class="secret-input"><input id="api-key" name="api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Incolla qui la tua chiave" maxlength="512"><button id="toggle-key" type="button" aria-label="Mostra la chiave">Mostra</button></div>
               <p class="field-help">Lascia vuoto per mantenere la chiave già salvata. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Crea una chiave su Google AI Studio ↗</a></p>
+              <div class="key-test"><button id="test-key" class="test-key" type="button">Prova la chiave</button><p id="key-test-result" role="status" aria-live="polite">Prova la chiave incollata, o quella salvata se il campo è vuoto, con i modelli qui sotto. Non consuma quota.</p></div>
               <button id="remove-key" class="remove-key" type="button" hidden>Rimuovi la chiave salvata</button>
             </div>
           </div>

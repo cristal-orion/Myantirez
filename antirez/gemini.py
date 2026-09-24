@@ -23,6 +23,10 @@ def request(path, payload, timeout=180):
         headers={"x-goog-api-key": key, "Content-Type": "application/json"},
         method="POST",
     )
+    return send(req, timeout)
+
+
+def send(req, timeout):
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             return json.load(response)
@@ -35,6 +39,28 @@ def request(path, payload, timeout=180):
         raise GeminiError(f"Gemini HTTP {exc.code}: {detail[:300] or exc.reason}") from exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise GeminiError(f"Impossibile raggiungere Gemini: {exc.reason if hasattr(exc, 'reason') else exc}") from exc
+
+
+def check(key, models):
+    """Read-only calls with no quota cost: is the key valid, does each model exist for it?"""
+    def get(path):
+        return send(urllib.request.Request("https://generativelanguage.googleapis.com/" + path,
+                                           headers={"x-goog-api-key": key}), 30)
+    try:
+        get("v1beta/models?pageSize=1")
+    except GeminiError as exc:
+        return {"ok": False, "message": f"Google rifiuta la chiave. {exc}", "missing": {}}
+    # Transcription needs v1alpha, as in transcription(); the other models use v1beta.
+    missing = {}
+    for name, version in (("TRANSCRIBE_MODEL", "v1alpha"), ("CHAT_MODEL", "v1beta"), ("EMBED_MODEL", "v1beta")):
+        try:
+            get(f"{version}/models/{models[name]}")
+        except GeminiError as exc:
+            missing[name] = f"{models[name]}: {exc}"
+    if missing:
+        return {"ok": False, "missing": missing,
+                "message": "La chiave funziona, ma questi modelli non sono disponibili: " + "; ".join(missing.values())}
+    return {"ok": True, "message": "La chiave funziona e i tre modelli sono disponibili.", "missing": {}}
 
 
 def text_from(response):

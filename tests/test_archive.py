@@ -248,6 +248,62 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual("", config.api_key())
             self.assertEqual("gemini-2.5-flash", config.model("CHAT_MODEL", "default"))
 
+    def test_key_check_reports_rejected_key_and_missing_models(self):
+        models = dict(config.MODEL_DEFAULTS)
+        calls = []
+
+        def google(req, timeout):
+            calls.append((req.full_url, req.get_header("X-goog-api-key"), req.get_method()))
+            if req.get_header("X-goog-api-key") == "sbagliata":
+                raise gemini.GeminiError("Gemini HTTP 400: API key not valid.")
+            if req.full_url.endswith("v1alpha/models/gemini-3.5-transcribe"):
+                raise gemini.GeminiError("Gemini HTTP 404: not found")
+            return {}
+
+        with patch.object(gemini, "send", side_effect=google):
+            rejected = gemini.check("sbagliata", models)
+            self.assertFalse(rejected["ok"])
+            self.assertIn("API key not valid", rejected["message"])
+            self.assertEqual(1, len(calls))
+            partial = gemini.check("buona", models)
+            self.assertFalse(partial["ok"])
+            self.assertEqual(["TRANSCRIBE_MODEL"], list(partial["missing"]))
+            self.assertTrue(all(method == "GET" for _, _, method in calls))
+            models["TRANSCRIBE_MODEL"] = "altro-modello"
+            self.assertTrue(gemini.check("buona", models)["ok"])
+
+    def test_key_test_endpoint_prefers_typed_key_and_needs_one(self):
+        env = Path(self.temporary.name) / ".env"
+        env.write_text("GEMINI_API_KEY=salvata\n", encoding="utf-8")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.addCleanup(server.server_close)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_port}"
+
+        def post(payload):
+            request = urllib.request.Request(base + "/api/settings/test", json.dumps(payload).encode(),
+                                             {"Content-Type": "application/json"})
+            return urllib.request.urlopen(request)
+
+        ok = {"ok": True, "message": "ok", "missing": {}}
+        with patch.object(config, "ENV_PATH", env), patch.dict(os.environ, {}, clear=True), \
+             patch.object(gemini, "check", return_value=ok) as check:
+            with post({"api_key": " incollata ", "CHAT_MODEL": "gemini-2.5-flash"}) as response:
+                self.assertEqual("typed", json.load(response)["tested"])
+            self.assertEqual("incollata", check.call_args.args[0])
+            self.assertEqual("gemini-2.5-flash", check.call_args.args[1]["CHAT_MODEL"])
+            with post({}) as response:
+                self.assertEqual("saved", json.load(response)["tested"])
+            self.assertEqual("salvata", check.call_args.args[0])
+            self.assertEqual("salvata", config.api_key())
+            env.write_text("", encoding="utf-8")
+            for invalid in ({}, {"CHAT_MODEL": "../x"}, {"PORT": "1"}):
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    post(dict(invalid, **({"api_key": "k"} if invalid else {})))
+                self.assertEqual(400, error.exception.code)
+
     def test_environment_settings_cannot_be_overridden_in_page(self):
         env = Path(self.temporary.name) / ".env"
         with patch.object(config, "ENV_PATH", env), patch.dict(os.environ, {"GEMINI_API_KEY": "external"}):

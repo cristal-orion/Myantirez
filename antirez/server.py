@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import chat, db, ingest
-from .config import ROOT, api_key, public_settings, save_settings, setting
+from .config import ROOT, api_key, public_settings, save_settings, setting, settings_to_test
 
 LOG = logging.getLogger(__name__)
 STATIC = ROOT / "static"
@@ -134,6 +134,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"started": True}, 202)
             if path == "/api/settings":
                 return self.send_json(save_settings(data))
+            if path == "/api/settings/test":
+                key, models, typed = settings_to_test(data)
+                result = chat.gemini.check(key, models)
+                result["tested"] = "typed" if typed else "saved"
+                return self.send_json(result)
             if path == "/api/chat":
                 question = data.get("question", "")
                 ident = data.get("conversation_id")
