@@ -124,33 +124,44 @@ def transcription(audio):
 
 def video_transcription(url, duration=None):
     """Explicit fallback when YouTube denies the audio download (not the audio model)."""
-    parts = []
     windows = ([(start, min(start + 300, duration)) for start in range(0, duration, 300)]
                if duration and duration > 0 else [(None, None)])
-    for start, end in windows:
-        video_part = {"fileData": {"fileUri": url}}
-        if start is not None:
-            video_part["videoMetadata"] = {"startOffset": f"{start}s", "endOffset": f"{end}s"}
-        response = request(
-            "v1beta/models/" + model("CHAT_MODEL", "gemini-3.5-flash") + ":generateContent",
-            {
-                "contents": [{"parts": [video_part, {"text":
-                    "Trascrivi integralmente il parlato di questo estratto nella lingua originale. "
-                    "Mantieni le idee, i nomi e i termini tecnici; non riassumere, non tradurre, "
-                    "non aggiungere introduzioni né parole non udibili. Restituisci solo la trascrizione."}]}],
-                "generationConfig": {"temperature": 0, "maxOutputTokens": 10000},
-            }, timeout=240,
-        )
-        try:
-            if response["candidates"][0].get("finishReason") == "MAX_TOKENS":
-                raise GeminiError("Trascrizione video troncata: riprovare con segmenti più brevi.")
-        except (KeyError, IndexError, TypeError):
-            pass
-        text = text_from(response)
-        if not text:
-            raise GeminiError("Gemini non ha restituito parlato dal video.")
-        parts.append(text)
-    return "\n\n".join(parts)
+    return "\n\n".join(video_window(url, start, end) for start, end in windows)
+
+
+def video_window(url, start, end):
+    """A truncated window is split in half and retried, so one dense passage does not lose the video."""
+    video_part = {"fileData": {"fileUri": url}}
+    if start is not None:
+        video_part["videoMetadata"] = {"startOffset": f"{start}s", "endOffset": f"{end}s"}
+    response = request(
+        "v1beta/models/" + model("CHAT_MODEL", "gemini-3.5-flash") + ":generateContent",
+        {
+            "contents": [{"parts": [video_part, {"text":
+                "Trascrivi integralmente il parlato di questo estratto nella lingua originale. "
+                "Mantieni le idee, i nomi e i termini tecnici; non riassumere, non tradurre, "
+                "non aggiungere introduzioni né parole non udibili. Restituisci solo la trascrizione."}]}],
+            # Thinking tokens count against maxOutputTokens: on a transcription they only truncate it.
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 10000,
+                                 "thinkingConfig": {"thinkingBudget": 0}},
+        }, timeout=240,
+    )
+    try:
+        truncated = response["candidates"][0].get("finishReason") == "MAX_TOKENS"
+    except (KeyError, IndexError, TypeError):
+        truncated = False
+    if truncated:
+        usage = response.get("usageMetadata", {})
+        LOG.warning("Estratto %s-%s s troncato (pensiero %s, testo %s token)", start, end,
+                    usage.get("thoughtsTokenCount", 0), usage.get("candidatesTokenCount", "?"))
+        if start is not None and end - start > 60:
+            middle = (start + end) // 2
+            return video_window(url, start, middle) + "\n\n" + video_window(url, middle, end)
+        raise GeminiError("Trascrizione video troncata: riprovare con segmenti più brevi.")
+    text = text_from(response)
+    if not text:
+        raise GeminiError("Gemini non ha restituito parlato dal video.")
+    return text
 
 
 def generate(system, prompt, timeout=180):

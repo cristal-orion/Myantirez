@@ -89,6 +89,25 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual("Parole dette.\n\nParole dette.", gemini.video_transcription("https://www.youtube.com/watch?v=abc123", 420))
             self.assertEqual("300s", request.call_args.args[1]["contents"][0]["parts"][0]["videoMetadata"]["startOffset"])
 
+    def test_truncated_window_is_split_and_thinking_is_off(self):
+        def answer(path, payload, timeout):
+            self.assertEqual(0, payload["generationConfig"]["thinkingConfig"]["thinkingBudget"])
+            offsets = payload["contents"][0]["parts"][0]["videoMetadata"]
+            window = (offsets["startOffset"], offsets["endOffset"])
+            if window == ("0s", "300s"):
+                return {"candidates": [{"content": {"parts": [{"text": "Metà"}]}, "finishReason": "MAX_TOKENS"}]}
+            return {"candidates": [{"content": {"parts": [{"text": "-".join(window)}]}, "finishReason": "STOP"}]}
+
+        with patch.object(gemini, "request", side_effect=answer):
+            self.assertEqual("0s-150s\n\n150s-300s\n\n300s-420s",
+                             gemini.video_transcription("https://www.youtube.com/watch?v=abc123", 420))
+        always = {"candidates": [{"content": {"parts": [{"text": "x"}]}, "finishReason": "MAX_TOKENS"}]}
+        with patch.object(gemini, "request", return_value=always) as request:
+            with self.assertRaisesRegex(gemini.GeminiError, "troncata"):
+                gemini.video_transcription("https://www.youtube.com/watch?v=abc123", 300)
+        # 300 -> 150 -> 75 -> 37 s: the first chain of halves gives up at the smallest window.
+        self.assertEqual(4, request.call_count)
+
     def test_captions_are_used_when_video_model_cannot_transcribe(self):
         self.add_video()
         with patch.object(ingest, "download_and_split", side_effect=subprocess.CalledProcessError(1, "yt-dlp")), \
